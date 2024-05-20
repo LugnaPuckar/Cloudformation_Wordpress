@@ -17,7 +17,7 @@ This is an AWS Cloud formation stack. It will create a cloud infrastructure of t
 ## How to provision the stack
 aws cloudformation create-stack \
     --stack-name EnterStackName \
-    --template-body file://upg1_FinalVersion.yaml \
+    --template-body file://aws_wp_stack.yaml \
     --parameters \
         ParameterKey=KeyName,ParameterValue=EnterKeyName \
         ParameterKey=VpcId,ParameterValue=EnterVPC-123456767123 \
