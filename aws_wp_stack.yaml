@@ -1,0 +1,374 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  This cloudformation template deploys a EC2 admin server with WordPress, connected to a RDS database.
+  OS: Amazon Linux 2023
+  App: WordPress
+  DB: MariaDB, RDS
+  NFS: EFS
+
+  When deploying the stack, use AWS CLI with parameters:
+  - KeyName
+  - VpcId
+  - SubnetID1, SubnetID2, SubnetID3
+  - RDSMasterUsername
+  - RDSMasterPassword
+  - WPAdminUser
+  - WPAdminPassword
+  - WPAdminEmail (has default value)
+  - WPTitle (has default value)
+
+
+Parameters:
+  # KeyPair - For SSH access to the EC2 instance.
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  
+  # VPC ID and Subnet IDs.
+  VpcId:
+    Description: VPC ID
+    Type: AWS::EC2::VPC::Id
+    ConstraintDescription: must be the name of an existing VPC.  
+  SubnetID1:
+    Description: Subnet ID 1
+    Type: AWS::EC2::Subnet::Id
+    ConstraintDescription: must be the name of an existing Subnet.
+  SubnetID2:
+    Description: Subnet ID 2
+    Type: AWS::EC2::Subnet::Id
+    ConstraintDescription: must be the name of an existing Subnet.
+  SubnetID3:
+    Description: Subnet ID 3
+    Type: AWS::EC2::Subnet::Id
+    ConstraintDescription: must be the name of an existing Subnet.
+  
+  # RDS MariaDB admin user and password.
+  RDSMasterUsername:
+    Description: RDS Admin User, Master Username
+    Type: String
+    MinLength: 5
+    MaxLength: 16
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: Min 5, Max 16 - must begin with a letter and contain only alphanumeric characters.
+  RDSMasterPassword:
+    Description: RDS Admin Password, Master Password
+    Type: String
+    MinLength: 5
+    MaxLength: 16
+    AllowedPattern: "[a-zA-Z0-9]*"
+    NoEcho: true
+    ConstraintDescription: Min 5, Max 16 - must contain only alphanumeric characters.
+  
+  # WordPress Data - Admin User, Password.
+  WPAdminUser:
+    Description: WordPress Admin User
+    Type: String
+    MinLength: 5
+    MaxLength: 16
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: Min 5, Max 16 - must begin with a letter and contain only alphanumeric characters.
+  WPAdminPassword:
+    Description: WordPress Admin Password
+    Type: String
+    MinLength: 5
+    MaxLength: 16
+    AllowedPattern: "[a-zA-Z0-9]*"
+    NoEcho: true
+    ConstraintDescription: Min 5, Max 16 - must contain only alphanumeric characters.
+  WPAdminEmail:
+    Description: WordPress Admin Email
+    Type: String
+    MinLength: 8
+    MaxLength: 92
+    Default: "thisisafakeadminemail@a.a"
+  WPTitle:
+    Description: WordPress Title
+    Type: String
+    Default: "Hello AWS!"
+
+
+Resources:
+
+  ##### SECURITY GROUPS #####
+  # EC2 instances in auto scaling group. Allows HTTP from ALB.
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instances, port 80, from the ALB.
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        SourceSecurityGroupId: !GetAtt ALBSecurityGroup.GroupId
+  
+  # Admin EC2. Allows SSH and HTTP.
+  EC2SecurityGroupAdmin:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for SSH access to the EC2 instance
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+  
+  # Security group for NFS file sharing with EFS        
+  NFSFileShareSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for NFS file sharing with EFS
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '2049'
+        ToPort: '2049'
+        SourceSecurityGroupId: !GetAtt EC2SecurityGroup.GroupId
+      - IpProtocol: tcp
+        FromPort: '2049'
+        ToPort: '2049'
+        SourceSecurityGroupId: !GetAtt EC2SecurityGroupAdmin.GroupId
+  
+  # RDS database security group. Allows MySQL from EC2 instances and EC2 admin.
+  # Remove CidrIP 0.0.0.0/0 when not testing.
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: !GetAtt EC2SecurityGroup.GroupId
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: !GetAtt EC2SecurityGroupAdmin.GroupId
+  
+  # Auto load balancer security group - Allows http80 from anywhere
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB security group.
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+    
+  # Listener to a ALB - Auto load balancer
+  MyListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+      LoadBalancerArn: !Ref MyLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # Auto load balancer
+  MyLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: MyLoadBalancer
+      Scheme: internet-facing
+      Subnets:
+        - !Ref SubnetID1
+        - !Ref SubnetID2
+        - !Ref SubnetID3
+      SecurityGroups:
+        - !GetAtt ALBSecurityGroup.GroupId
+
+  # Target group for the Auto Load Balancer
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref VpcId
+      TargetType: instance
+
+  # Launch Template for the Auto Scaling Group
+  MyLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+    - EC2Instance
+    Properties:
+      LaunchTemplateName: MyLaunchTemplate
+      LaunchTemplateData:
+        ImageId: ami-0d421d84814b7d51c
+        InstanceType: t2.micro
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+        - !GetAtt EC2SecurityGroup.GroupId
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+
+            ## 1. Prepare LAMP
+            dnf update -y
+            dnf install -y httpd wget php-fpm php-mysqli php-json php php-devel
+            dnf install mariadb105-server -y
+
+            ## 2. Install AWS EFS utils and mount.
+            dnf install -y amazon-efs-utils
+            mount -t efs -o tls ${MyEFS}:/ /var/www/html
+
+            ## 3. Start and enable services.
+            systemctl start httpd
+            systemctl enable httpd
+
+
+  # Auto Scaling Group
+  MyAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: MyLaunchTemplate
+    Properties:
+      AutoScalingGroupName: MyAutoScalingGroup
+      LaunchTemplate:
+        LaunchTemplateName: MyLaunchTemplate
+        Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 3
+      DesiredCapacity: 1
+      VPCZoneIdentifier:
+        - !Ref SubnetID1
+        - !Ref SubnetID2
+        - !Ref SubnetID3
+      TargetGroupARNs:
+        - !Ref MyTargetGroup
+
+  # EC2 instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+    - EC2SecurityGroup
+    - MariaDBInstance
+    - MyLoadBalancer
+    - MyEFS
+    - MountTargetAZ1
+    - MountTargetAZ2
+    - MountTargetAZ3
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0d421d84814b7d51c
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - !Ref EC2SecurityGroupAdmin
+      Tags:
+      - Key: Name
+        Value: EC2Admin
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+
+          ## 1. Prepare LAMP
+          dnf update -y
+          dnf install -y httpd wget php-fpm php-mysqli php-json php php-devel
+          dnf install mariadb105-server -y
+          systemctl start httpd
+          systemctl enable httpd
+
+          ## 2. Set file permissions
+          usermod -a -G apache ec2-user
+          chown -R ec2-user:apache /var/www
+          chmod 2775 /var/www
+          find /var/www -type d -exec chmod 2775 {} \;
+          find /var/www -type f -exec chmod 0664 {} \;
+
+          # 3. Install AWS EFS utils and mount the EFS
+          dnf install -y amazon-efs-utils
+          mount -t efs -o tls ${MyEFS}:/ /var/www/html
+
+          # 3. Install WordPress
+          cd /var/www/html
+          dnf install wget php-mysqlnd httpd php-fpm php-mysqli mariadb105-server php-json php php-devel -y
+          wget https://wordpress.org/latest.tar.gz
+          tar -xzf latest.tar.gz
+          rm latest.tar.gz
+          cd /
+          cp /var/www/html/wordpress/wp-config-sample.php /var/www/html/wordpress/wp-config.php
+
+          # 4. Overwrite the wp-config.php and httpd.conf.
+          sed -i 's/database_name_here/wordpressDB/g' /var/www/html/wordpress/wp-config.php
+          sed -i "s/username_here/${WPAdminUser}/g" /var/www/html/wordpress/wp-config.php
+          sed -i "s/password_here/${WPAdminPassword}/g" /var/www/html/wordpress/wp-config.php
+          sed -i "s/localhost/${MariaDBInstance.Endpoint.Address}/g" /var/www/html/wordpress/wp-config.php
+          sed -i '/<Directory "\/var\/www\/html">/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/httpd/conf/httpd.conf
+
+          # 5. Start the services
+          dnf install php-gd -y
+          systemctl restart httpd
+
+          # 6. Install wordpress-cli
+          wget https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          chmod +x wp-cli.phar
+          mv wp-cli.phar /usr/local/bin/wp
+          sudo -u ec2-user -i -- wp core install --path=/var/www/html/wordpress --url="${MyLoadBalancer.DNSName}/wordpress" --title="${WPTitle}" --admin_user="${WPAdminUser}" --admin_password="${WPAdminPassword}" --admin_email="${WPAdminEmail}" --skip-email
+
+          
+  MariaDBInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn: RDSSecurityGroup
+    Properties:
+      StorageType: gp2
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro # Make sure to use free tier.    ----- db.t3.micro or db.t4g.micro
+      Engine: mariadb
+      EngineVersion: '10.11.7'  # Specify the desired version here
+      MasterUsername: !Ref RDSMasterUsername
+      MasterUserPassword: !Ref RDSMasterPassword
+      PubliclyAccessible: true
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+      BackupRetentionPeriod: 0  # Set to 0 to disable automatic backup
+      DBName: wordpressDB
+
+  # EFS file system
+  MyEFS:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: MyEFS
+      PerformanceMode: generalPurpose
+      Encrypted: false
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_7_DAYS
+
+  # Mount targets for EFS in three specific subnets
+  MountTargetAZ1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MyEFS
+      SecurityGroups:
+        - !GetAtt NFSFileShareSecurityGroup.GroupId
+      SubnetId: !Ref SubnetID1
+
+  MountTargetAZ2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MyEFS
+      SecurityGroups:
+        - !GetAtt NFSFileShareSecurityGroup.GroupId
+      SubnetId: !Ref SubnetID2
+
+  MountTargetAZ3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MyEFS
+      SecurityGroups:
+        - !GetAtt NFSFileShareSecurityGroup.GroupId
+      SubnetId: !Ref SubnetID3
