@@ -15,20 +15,20 @@ This is an AWS Cloud formation stack. It will create a cloud infrastructure of t
 * A terminal for AWS CLI - I've used Git Bash.
 
 ## How to provision the stack
-aws cloudformation create-stack \\
-    --stack-name EnterStackName \\
-    --template-body file://aws_wp_stack.yaml \\
-    --parameters \\
-        ParameterKey=KeyName,ParameterValue=EnterKeyName \\
-        ParameterKey=VpcId,ParameterValue=EnterVPC-123456767123 \\
-        ParameterKey=SubnetID1,ParameterValue=EnterSubnet1-111111111111 \\
-        ParameterKey=SubnetID2,ParameterValue=EnterSubnet2-222222222222 \\
-        ParameterKey=SubnetID3,ParameterValue=EnterSubnet3-333333333333 \\
-        ParameterKey=RDSMasterUsername,ParameterValue=EnterAdminUserName \\
-        ParameterKey=RDSMasterPassword,ParameterValue=EnterAdminPassword \\
-        ParameterKey=WPAdminUser,ParameterValue=EnterWPAdminUsername \\
-        ParameterKey=WPAdminPassword,ParameterValue=EnterWPAdminPassword \\
-        ParameterKey=WPAdminEmail,ParameterValue=EnterEmailOfChoice \\
+aws cloudformation create-stack \\  
+    --stack-name EnterStackName \\  
+    --template-body file://aws_wp_stack.yaml \\  
+    --parameters \\  
+        ParameterKey=KeyName,ParameterValue=EnterKeyName \\  
+        ParameterKey=VpcId,ParameterValue=EnterVPC-123456767123 \\  
+        ParameterKey=SubnetID1,ParameterValue=EnterSubnet1-111111111111 \\  
+        ParameterKey=SubnetID2,ParameterValue=EnterSubnet2-222222222222 \\  
+        ParameterKey=SubnetID3,ParameterValue=EnterSubnet3-333333333333 \\  
+        ParameterKey=RDSMasterUsername,ParameterValue=EnterAdminUserName \\  
+        ParameterKey=RDSMasterPassword,ParameterValue=EnterAdminPassword \\  
+        ParameterKey=WPAdminUser,ParameterValue=EnterWPAdminUsername \\  
+        ParameterKey=WPAdminPassword,ParameterValue=EnterWPAdminPassword \\  
+        ParameterKey=WPAdminEmail,ParameterValue=EnterEmailOfChoice \\  
         ParameterKey=WPTitle,ParameterValue=EnterWPTitleName
 
 ## Replacing values:
